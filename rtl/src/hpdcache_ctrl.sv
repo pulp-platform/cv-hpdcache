@@ -68,6 +68,17 @@ import hpdcache_pkg::*;
     output logic                  core_rsp_valid_o,
     output hpdcache_rsp_t         core_rsp_o,
 
+    //      ISPM request interface
+    output logic                  ispm_req_valid_o,
+    output hpdcache_req_t         ispm_req_o,
+    output logic                  ispm_req_abort_o,
+    output hpdcache_tag_t         ispm_req_tag_o,
+    output hpdcache_pma_t         ispm_req_pma_o,
+
+    //      ISPM response interface
+    input  logic                  ispm_rsp_valid_i,
+    input  hpdcache_rsp_t         ispm_rsp_i,
+
     //      Force the write buffer to send all pending writes
     input  logic                  wbuf_flush_i,
 
@@ -243,6 +254,10 @@ import hpdcache_pkg::*;
     input  logic unsigned [5:0]   cfg_scrub_period_i,
     input  logic                  cfg_scrub_restart_i,
 
+    input  logic                  cfg_enable_dspm_i,
+    input  logic                  cfg_enable_ispm_i,
+    input  hpdcache_way_vector_t  cfg_dspm_ways_i,
+
     //   Performance events
     output logic                  evt_cache_write_miss_o,
     output logic                  evt_cache_read_miss_o,
@@ -293,6 +308,14 @@ import hpdcache_pkg::*;
     } rtab_entry_t;
 
     localparam hpdcache_uint CACHELINE_CHUNKS = (HPDcacheCfg.u.clWords/HPDcacheCfg.u.accessWords);
+
+    //  Definition of internal types
+    //  {{{
+    typedef struct packed {
+        logic [1:0]         idx;
+        hpdcache_req_addr_t start_addr;
+        hpdcache_req_addr_t end_addr;
+    } addr_decode_rule_t;
     //  }}}
 
     //  Definition of internal registers
@@ -424,6 +447,9 @@ import hpdcache_pkg::*;
     logic                    err_busy;
     logic                    err_wait;
     hpdcache_nline_t         st1_victim_nline;
+    logic                    st1_req_is_cache_req;
+    logic                    st1_req_is_dspm_req;
+    logic                    st1_req_is_ispm_req;
     logic                    st1_rtab_alloc;
     logic                    st1_rtab_alloc_and_link;
     logic                    st1_rtab_pop_try_commit;
@@ -463,6 +489,82 @@ import hpdcache_pkg::*;
     hpdcache_req_data_t      data_req_read_data;
 
     logic                    rd_wr_conflict;
+
+    logic                    ispm_req_submit_pe;
+    logic                    ispm_req_pend_ctrl;
+
+    logic                    ispm_req_valid_d, ispm_req_valid_q;
+    logic                    ispm_rsp_valid, ispm_rsp_valid_d, ispm_rsp_valid_q;
+    logic                    ispm_need_rsp_d, ispm_need_rsp_q;
+    hpdcache_req_t           ispm_req_d, ispm_req_q;
+    hpdcache_rsp_t           ispm_rsp, ispm_rsp_d, ispm_rsp_q;
+
+    // Pass through the arbitrated request to the ISPM always
+    // Only the valid/ready handshake is controlled by the protocol engine
+    assign ispm_req_o         = ispm_req_q;
+    assign ispm_req_valid_o   = ispm_req_valid_q;
+    assign ispm_req_abort_o   = st1_req_abort;
+    assign ispm_req_tag_o     = ispm_req_o.addr_tag;
+    assign ispm_req_pma_o     = ispm_req_o.pma;
+    assign ispm_req_pend_ctrl = ispm_req_valid_q;
+
+    assign ispm_rsp           = ispm_rsp_q;
+
+    // Handle ISPM requests by keeping valid asserted and blocking new pipeline
+    // until the current request was acknowledged
+    always_comb begin
+       ispm_need_rsp_d  = ispm_need_rsp_q;
+       ispm_req_d       = ispm_req_q;
+       ispm_req_valid_d = ispm_req_valid_q;
+       ispm_rsp_d       = ispm_rsp_q;
+       ispm_rsp_valid_d = ispm_rsp_valid_q;
+
+       ispm_rsp_valid   = 1'b0;
+
+       // Start a new request to the ISPM controller
+       if (ispm_req_submit_pe) begin
+          ispm_need_rsp_d    = st1_req.req.need_rsp;
+          ispm_req_d         = st1_req.req;
+          ispm_req_valid_d   = 1'b1;
+       end
+
+       // If we've gotten a response, save it and deassert the request
+       if (ispm_rsp_valid_i) begin
+          ispm_req_d       = '0;
+          ispm_rsp_d       = ispm_rsp_i;
+          ispm_req_valid_d = 1'b0;
+          ispm_rsp_valid_d = 1'b1;
+       end
+
+       // If we've gotten a response in the past, forward it to
+       // the core, **iff** the core actually needs a response and there
+       // are no refills or uncached responses pending
+       if (ispm_rsp_valid_q) begin
+          ispm_rsp_valid   = ispm_need_rsp_q &
+                            ~refill_core_rsp_valid_i &
+                            ~uc_core_rsp_valid_i;
+          ispm_rsp_valid_d = ispm_need_rsp_q & ~ispm_rsp_valid;
+          ispm_need_rsp_d  = ispm_need_rsp_q & ~ispm_rsp_valid;
+       end
+    end
+
+
+    // Implement the necessary FFs
+    always_ff @(posedge clk_i, negedge rst_ni) begin
+       if(~rst_ni) begin
+          ispm_need_rsp_q  <= 1'b0;
+          ispm_req_q       <= '0;
+          ispm_req_valid_q <= 1'b0;
+          ispm_rsp_q       <= '0;
+          ispm_rsp_valid_q <= 1'b0;
+       end else begin
+          ispm_need_rsp_q  <= ispm_need_rsp_d;
+          ispm_req_q       <= ispm_req_d;
+          ispm_req_valid_q <= ispm_req_valid_d;
+          ispm_rsp_q       <= ispm_rsp_d;
+          ispm_rsp_valid_q <= ispm_rsp_valid_d;
+       end
+    end
     //  }}}
 
     //  Decoding of the request in stage 0
@@ -496,6 +598,10 @@ import hpdcache_pkg::*;
             //  force uncacheable requests if the cache is disabled
             if (!cfg_enable_i) begin
                 st0_req.req.pma.uncacheable = 1'b1;
+            end
+            //  force uncacheable requests if all ways are in SPM mode
+            if (cfg_enable_dspm_i & &cfg_dspm_ways_i & core_req_i.phys_indexed) begin
+                st0_req.req.pma.uncacheable = ~core_req_i.pma.dspm & ~core_req_i.pma.ispm;
             end
             //  if WT write-policy is not supported, force WB
             if (!HPDcacheCfg.u.wtEn) begin
@@ -531,6 +637,10 @@ import hpdcache_pkg::*;
         if (!cfg_enable_i) begin
             st1_req_pma.uncacheable = 1'b1;
         end
+        //  force uncacheable requests if all ways are in SPM mode
+        if (cfg_enable_dspm_i & &cfg_dspm_ways_i) begin
+            st1_req_pma.uncacheable  = ~st1_req_pma.dspm & ~st1_req_pma.ispm;
+        end
         //  if WT write-policy is not supported, force WB
         if (!HPDcacheCfg.u.wtEn) begin
             st1_req_pma.wr_policy_hint = HPDCACHE_WR_POLICY_WB;
@@ -559,7 +669,8 @@ import hpdcache_pkg::*;
     //         previous cycle (stage 0). Useful in case of TLB miss for example
     assign st1_req_abort           = core_req_abort_i & ~st1_req.req.phys_indexed;
 
-    assign st1_req_is_uncacheable  = ~cfg_enable_i | st1_req.req.pma.uncacheable;
+    assign st1_req_is_uncacheable  = ~cfg_enable_i | st1_req.req.pma.uncacheable |
+                                     (cfg_enable_dspm_i & &cfg_dspm_ways_i & ~st1_req.req.pma.dspm & ~st1_req.req.pma.ispm);
     assign st1_req_is_load         =         is_load(st1_req.req.op) & ~st1_req.err_scrubbing;
     assign st1_req_is_store        =        is_store(st1_req.req.op);
     assign st1_req_is_amo          =          is_amo(st1_req.req.op);
@@ -585,6 +696,23 @@ import hpdcache_pkg::*;
     assign st1_req_wr_wt           = (st1_req.req.pma.wr_policy_hint == HPDCACHE_WR_POLICY_WT);
     assign st1_req_wr_wb           = (st1_req.req.pma.wr_policy_hint == HPDCACHE_WR_POLICY_WB);
     assign st1_req_wr_auto         = (st1_req.req.pma.wr_policy_hint == HPDCACHE_WR_POLICY_AUTO);
+
+    always_comb begin : spm_pma_comb
+        st1_req_is_cache_req = 1'b0;
+        st1_req_is_dspm_req  = 1'b0;
+        st1_req_is_ispm_req  = 1'b0;
+
+        unique case (1'b1)
+            cfg_enable_dspm_i && st1_req.req.pma.dspm:
+                st1_req_is_dspm_req = 1'b1;
+
+            cfg_enable_ispm_i && st1_req.req.pma.ispm:
+                st1_req_is_ispm_req = 1'b1;
+
+            default:
+                st1_req_is_cache_req = 1'b1;
+        endcase
+    end
     //  }}}
 
     //  Cache controller protocol engine
@@ -649,6 +777,9 @@ import hpdcache_pkg::*;
         .st1_err_o                          (st1_err_trigger),
         .err_busy_i                         (err_busy),
         .err_wait_i                         (err_wait),
+        .st1_req_is_cache_req_i             (st1_req_is_cache_req),
+        .st1_req_is_dspm_req_i              (st1_req_is_dspm_req),
+        .st1_req_is_ispm_req_i              (st1_req_is_ispm_req),
         .st1_req_valid_o                    (st1_req_valid_d),
         .st1_rsp_valid_o                    (st1_rsp_valid),
         .st1_rsp_error_o                    (st1_rsp_error),
@@ -717,6 +848,9 @@ import hpdcache_pkg::*;
         .st1_mshr_hit_i                     (st1_mshr_hit_i),
         .st1_mshr_full_i                    (st1_mshr_alloc_full_i),
         .st1_mshr_cbuf_full_i               (st1_mshr_alloc_cbuf_full_i),
+
+        .ispm_req_submit_o                  (ispm_req_submit_pe),
+        .ispm_req_pend_i                    (ispm_req_pend_ctrl),
 
         .refill_busy_i,
         .refill_core_rsp_valid_i,
@@ -1027,6 +1161,7 @@ import hpdcache_pkg::*;
         .dir_hit_wback_o               (st1_dir_hit_wback),
         .dir_hit_dirty_o               (st1_dir_hit_dirty),
         .dir_hit_fetch_o               (st1_dir_hit_fetch),
+        .dir_is_spm_access_i           (st1_req_is_dspm_req),
 
         .dir_updt_i                    (st2_dir_updt_q),
         .dir_updt_set_i                (st2_dir_updt_set_q),
@@ -1138,7 +1273,10 @@ import hpdcache_pkg::*;
         .data_err_read_i               (err_dat_read),
         .data_err_rdata_o              (err_dat_rdata_d),
         .data_err_write_i              (err_dat_write),
-        .data_err_wdata_i              (err_dat_wdata)
+        .data_err_wdata_i              (err_dat_wdata),
+
+        .cfg_enable_dspm_i,
+        .cfg_dspm_ways_i
     );
 
     assign st1_dir_hit           = |st1_dir_hit_way;
@@ -1713,19 +1851,23 @@ import hpdcache_pkg::*;
     assign core_rsp_valid_o   = refill_core_rsp_valid_i |
                                 (uc_core_rsp_valid_i & uc_core_rsp_ready_o) |
                                 (cmo_core_rsp_valid_i & cmo_core_rsp_ready_o) |
-                                core_rsp_valid;
+                                core_rsp_valid |
+                                ispm_rsp_valid;
     assign core_rsp_o.rdata   = (refill_core_rsp_valid_i ? refill_core_rsp_i.rdata :
                                 (cmo_core_rsp_valid_i    ? cmo_core_rsp_i.rdata :
                                 (uc_core_rsp_valid_i     ? uc_core_rsp_i.rdata :
-                                                           data_req_read_data)));
+                                (ispm_rsp_valid          ? ispm_rsp.rdata :
+                                                           data_req_read_data))));
     assign core_rsp_o.sid     = (refill_core_rsp_valid_i ? refill_core_rsp_i.sid :
                                 (cmo_core_rsp_valid_i    ? cmo_core_rsp_i.sid :
                                 (uc_core_rsp_valid_i     ? uc_core_rsp_i.sid :
-                                                           core_rsp_sid)));
+                                (ispm_rsp_valid          ? ispm_rsp.sid :
+                                                           core_rsp_sid))));
     assign core_rsp_o.tid     = (refill_core_rsp_valid_i ? refill_core_rsp_i.tid :
                                 (cmo_core_rsp_valid_i    ? cmo_core_rsp_i.tid :
                                 (uc_core_rsp_valid_i     ? uc_core_rsp_i.tid :
-                                                           core_rsp_tid)));
+                                (ispm_rsp_valid          ? ispm_rsp.tid :
+                                                           core_rsp_tid))));
     assign core_rsp_o.error   = (refill_core_rsp_valid_i ? refill_core_rsp_i.error :
                                 (cmo_core_rsp_valid_i    ? cmo_core_rsp_i.error :
                                 (uc_core_rsp_valid_i     ? uc_core_rsp_i.error :

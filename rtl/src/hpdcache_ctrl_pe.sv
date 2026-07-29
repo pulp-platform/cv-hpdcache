@@ -90,6 +90,9 @@ import hpdcache_pkg::*;
     output logic                   st1_err_o,
     input  logic                   err_busy_i,
     input  logic                   err_wait_i,
+    input  logic                   st1_req_is_cache_req_i,
+    input  logic                   st1_req_is_dspm_req_i,
+    input  logic                   st1_req_is_ispm_req_i,
     output logic                   st1_req_valid_o,
     output logic                   st1_rsp_valid_o,
     output logic                   st1_rsp_error_o,
@@ -164,6 +167,9 @@ import hpdcache_pkg::*;
     input  logic                   cachedir_hit_i,
     input  logic                   cachedir_init_ready_i,
     //   }}}
+
+    output logic                   ispm_req_submit_o,
+    input  logic                   ispm_req_pend_i,
 
     //   Refill interface
     //   {{{
@@ -343,6 +349,8 @@ import hpdcache_pkg::*;
 
         nop                                 = 1'b0;
 
+        ispm_req_submit_o                   = 1'b0;
+
         rtab_check_o                        = 1'b0;
         st1_rtab_alloc                      = 1'b0;
         st1_rtab_alloc_and_link             = 1'b0;
@@ -393,6 +401,13 @@ import hpdcache_pkg::*;
         end
         //  }}}
 
+        //  ISPM request pending
+        //  {{{
+        else if (ispm_req_pend_i) begin
+            //  stall to let the ISPM request finish
+            evt_stall_refill_o = core_req_valid_i;
+        end
+        //  }}}
         //  Normal pipeline operation
         //  {{{
         else begin
@@ -554,6 +569,40 @@ import hpdcache_pkg::*;
                 end
                 //  }}}
 
+                //  SPM requests
+                //  {{{
+                else if(st1_req_is_dspm_req_i) begin
+                        if (st1_req_is_store_i) begin
+                             //  Respond to the core
+                            st1_rsp_valid_o = st1_req_need_rsp_i;
+
+                            //  Write in the data RAM
+                            st1_req_cachedata_write_o        = 1'b1;
+                            st1_req_cachedata_write_enable_o = 1'b1;
+
+                            //  Performance event
+                            evt_write_req_o = 1'b1;
+                        end
+
+                        if (st1_req_is_load_i) begin
+                                //  Respond to the core
+                                st1_rsp_valid_o = st1_req_need_rsp_i;
+
+                                //  If not lowLatency, data is read from the cache in stage 1
+                                if (!HPDcacheCfg.u.lowLatency) begin
+                                    //  Read data from the cache
+                                    st1_req_cachedata_read = 1'b1;
+                                end
+
+                                //  Performance event
+                                evt_read_req_o     = 1'b1;
+                        end
+                    end else if(st1_req_is_ispm_req_i) begin
+                        ispm_req_submit_o  = 1'b1;
+                        evt_read_req_o     = 1'b1;
+                    end
+                //  }}}
+
                 //  Cacheable request
                 //  {{{
                 else begin
@@ -680,7 +729,7 @@ import hpdcache_pkg::*;
                             //  If there is a match in the write buffer, send the entry right away
                             wbuf_read_flush_hit_o = 1'b1;
 
-                            //  Select a victim cacheline
+                            //  Select a victim cacheline for cache misses
                             st1_req_cachedir_sel_victim_o = 1'b1;
 
                             //  Pending miss on the same line
@@ -752,7 +801,7 @@ import hpdcache_pkg::*;
                                 st2_mshr_alloc_o = 1'b1;
                                 st2_mshr_alloc_need_rsp_o = st1_req_need_rsp_i;
                                 st2_mshr_alloc_wback_o = (st1_req_wr_auto_i & cfg_default_wb_i) |
-                                                          st1_req_wr_wb_i;
+                                                        st1_req_wr_wb_i;
                                 st2_mshr_alloc_dirty_o = 1'b0;
 
                                 //  Update the cache directory state to FETCHING
@@ -764,7 +813,6 @@ import hpdcache_pkg::*;
                             end
                         end
                         //  }}}
-
                         //  Cache hit
                         //  {{{
                         else begin
@@ -1197,7 +1245,8 @@ import hpdcache_pkg::*;
                                & ~uc_busy_i
                                & ~err_busy_i
                                & ~rtab_fence_i
-                               & ~nop;
+                               & ~nop
+                               & ~ispm_req_pend_i;
 
             scrub_req_ready_o = scrub_req_valid_i
                                & ~rtab_req_valid_i
