@@ -249,10 +249,16 @@ import hpdcache_pkg::*;
     logic  st1_fence;
     logic  st1_rtab_alloc, st1_rtab_alloc_and_link;
     logic  st0_req_cachedata_read, st1_req_cachedata_read;
+    logic  st1_cmo_dir_hit, st1_cmo_dir_hit_dirty;
     //  }}}
 
     //  Global control signals
     //  {{{
+
+    //      Cache-line CMOs only act on cache ways: a CMO targeting an SPM address hits the SPM
+    //      way in the directory, but it must not invalidate or flush it.
+    assign st1_cmo_dir_hit       = st1_dir_hit_i       & ~st1_req_is_dspm_req_i & ~st1_req_is_ispm_req_i;
+    assign st1_cmo_dir_hit_dirty = st1_dir_hit_dirty_i & ~st1_req_is_dspm_req_i & ~st1_req_is_ispm_req_i;
 
     //      Determine if the new request is a "fence". Here, fence instructions are considered those
     //      that need to be executed in program order (irrespectively of addresses). This means that
@@ -522,7 +528,7 @@ import hpdcache_pkg::*;
                         //  Process inval cacheline CMO
                         else if (st1_req_is_cmo_inval_nline_i) begin
                             //  Invalidate the cacheline on cache hit
-                            st2_dir_updt_o       = st1_dir_hit_i;
+                            st2_dir_updt_o       = st1_cmo_dir_hit;
                             st2_dir_updt_valid_o = 1'b0;
                             st2_dir_updt_wback_o = 1'b0;
                             st2_dir_updt_dirty_o = 1'b0;
@@ -536,10 +542,10 @@ import hpdcache_pkg::*;
                         //  Process flush cacheline CMO
                         else if (st1_req_is_cmo_flush_nline_i) begin
                             // allocate flush if there is a hit and the cacheline is dirty
-                            st2_flush_alloc_o = st1_dir_hit_dirty_i;
+                            st2_flush_alloc_o = st1_cmo_dir_hit_dirty;
 
                             // update the cacheline for flush
-                            st2_dir_updt_o = st1_dir_hit_dirty_i;
+                            st2_dir_updt_o = st1_cmo_dir_hit_dirty;
                             st2_dir_updt_valid_o = 1'b1;
                             st2_dir_updt_wback_o = 1'b1;
                             st2_dir_updt_dirty_o = 1'b0;
@@ -553,10 +559,10 @@ import hpdcache_pkg::*;
                         //  Process flush cacheline CMO
                         else if (st1_req_is_cmo_flush_inval_nline_i) begin
                             // allocate flush if there is a hit and the cacheline is dirty
-                            st2_flush_alloc_o = st1_dir_hit_dirty_i;
+                            st2_flush_alloc_o = st1_cmo_dir_hit_dirty;
 
                             // update the cacheline for flush
-                            st2_dir_updt_o = st1_dir_hit_i;
+                            st2_dir_updt_o = st1_cmo_dir_hit;
                             st2_dir_updt_valid_o = 1'b0;
                             st2_dir_updt_wback_o = 1'b0;
                             st2_dir_updt_dirty_o = 1'b0;
