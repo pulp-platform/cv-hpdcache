@@ -667,6 +667,11 @@ import hpdcache_pkg::*;
                 //  SPM requests
                 //  {{{
                 else if(st1_req_is_dspm_req_i) begin
+                        //  SPM requests always complete in stage 1. A replayed one must
+                        //  release its replay-table entry here, like every other request
+                        //  that completes, or the entry stays allocated forever.
+                        st1_rtab_commit_o = st1_req_rtab_i;
+
                         if (st1_req_is_store_i) begin
                              //  Respond to the core
                             st1_rsp_valid_o = st1_req_need_rsp_i;
@@ -710,6 +715,9 @@ import hpdcache_pkg::*;
                                 evt_read_req_o     = 1'b1;
                         end
                     end else if(st1_req_is_ispm_req_i) begin
+                        //  Handed over to the ISPM controller: done as far as the replay
+                        //  table is concerned.
+                        st1_rtab_commit_o  = st1_req_rtab_i;
                         ispm_req_submit_o  = 1'b1;
                         evt_read_req_o     = 1'b1;
                     end
