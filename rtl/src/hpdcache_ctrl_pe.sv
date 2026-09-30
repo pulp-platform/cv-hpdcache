@@ -671,6 +671,23 @@ import hpdcache_pkg::*;
                              //  Respond to the core
                             st1_rsp_valid_o = st1_req_need_rsp_i;
 
+                            //  Same structural hazard as for cacheable stores: in lowLatency
+                            //  mode a load in stage 0 reads the data RAM in the cycle this
+                            //  store writes it, and the write address wins on every RAM row,
+                            //  so the load would read another set.
+                            if (HPDcacheCfg.u.lowLatency) begin
+                                st1_nop = rd_wr_conflict_i & st0_req_is_load_i;
+
+                                if (HPDcacheCfg.u.eccEn) begin
+                                    if (rd_wr_conflict_i) begin
+                                        st1_nop |= (st0_req_is_pstore | st0_req_is_pamo);
+                                        if (HPDcacheCfg.u.eccScrubberEn) begin
+                                            st1_nop |= st0_req_is_scrub_i;
+                                        end
+                                    end
+                                end
+                            end
+
                             //  Write in the data RAM
                             st1_req_cachedata_write_o        = 1'b1;
                             st1_req_cachedata_write_enable_o = 1'b1;
