@@ -375,6 +375,7 @@ import hpdcache_pkg::*;
     logic                    st1_rsp_valid;
     logic                    st1_rsp_error;
     logic                    st1_rsp_aborted;
+    logic                    st1_rsp_spm_inactive;
     hpdcache_req_x_t         st1_req;
     logic                    st1_req_abort;
     logic                    st1_req_cachedata_write;
@@ -794,6 +795,7 @@ import hpdcache_pkg::*;
         .st1_rsp_valid_o                    (st1_rsp_valid),
         .st1_rsp_error_o                    (st1_rsp_error),
         .st1_rsp_aborted_o                  (st1_rsp_aborted),
+        .st1_rsp_spm_inactive_o             (st1_rsp_spm_inactive),
         .st1_req_cachedir_sel_victim_o      (st1_victim_sel),
         .st1_req_cachedir_updt_sel_victim_o (st1_req_updt_sel_victim),
         .st1_req_cachedata_write_o          (st1_req_cachedata_write),
@@ -1810,11 +1812,18 @@ import hpdcache_pkg::*;
 
     //  Control of the response to the core
     //  {{{
+    //  Data returned by a load to an SPM way that is not configured as SPM; the same
+    //  value as the CVA6 SPM controllers (dspm_ctrl, ispm_ctrl) return
+    localparam hpdcache_req_data_t SPM_INACTIVE_RDATA =
+        hpdcache_req_data_t'({(($bits(hpdcache_req_data_t) + 63) / 64){64'hCA11AB1E_BADCAB1E}});
+    logic core_rsp_spm_inactive;
+
     if (HPDcacheCfg.u.lowLatency) begin : gen_st2_core_rsp_comb
         //  When lowLatency, all responses to the core are sent on stage 1
         assign core_rsp_valid = st1_rsp_valid;
         assign core_rsp_aborted = st1_rsp_aborted;
         assign core_rsp_error = st1_rsp_error;
+        assign core_rsp_spm_inactive = st1_rsp_spm_inactive;
         assign core_rsp_sid = st1_req.req.sid;
         assign core_rsp_tid = st1_req.req.tid;
     end else begin : gen_st2_core_rsp_ff
@@ -1825,12 +1834,14 @@ import hpdcache_pkg::*;
                 core_rsp_valid <= 1'b0;
                 core_rsp_aborted <= 1'b0;
                 core_rsp_error <= 1'b0;
+                core_rsp_spm_inactive <= 1'b0;
                 core_rsp_sid <= 'h0;
                 core_rsp_tid <= 'h0;
             end else begin
                 core_rsp_valid <= st1_rsp_valid;
                 core_rsp_aborted <= st1_rsp_aborted;
                 core_rsp_error <= st1_rsp_error;
+                core_rsp_spm_inactive <= st1_rsp_spm_inactive;
                 core_rsp_sid <= st1_req.req.sid;
                 core_rsp_tid <= st1_req.req.tid;
             end
@@ -1846,7 +1857,8 @@ import hpdcache_pkg::*;
                                 (cmo_core_rsp_valid_i    ? cmo_core_rsp_i.rdata :
                                 (uc_core_rsp_valid_i     ? uc_core_rsp_i.rdata :
                                 (ispm_rsp_valid          ? ispm_rsp.rdata :
-                                                           data_req_read_data))));
+                                (core_rsp_spm_inactive   ? SPM_INACTIVE_RDATA :
+                                                           data_req_read_data)))));
     assign core_rsp_o.sid     = (refill_core_rsp_valid_i ? refill_core_rsp_i.sid :
                                 (cmo_core_rsp_valid_i    ? cmo_core_rsp_i.sid :
                                 (uc_core_rsp_valid_i     ? uc_core_rsp_i.sid :

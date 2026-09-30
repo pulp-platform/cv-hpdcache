@@ -102,6 +102,7 @@ import hpdcache_pkg::*;
     output logic                   st1_rsp_valid_o,
     output logic                   st1_rsp_error_o,
     output logic                   st1_rsp_aborted_o,
+    output logic                   st1_rsp_spm_inactive_o,
     output logic                   st1_req_cachedir_sel_victim_o,
     output logic                   st1_req_cachedir_updt_sel_victim_o,
     output logic                   st1_req_cachedata_write_o,
@@ -343,6 +344,7 @@ import hpdcache_pkg::*;
         st1_req_cachedir_updt_sel_victim_o  = 1'b0;
         st1_rsp_valid_o                     = 1'b0;
         st1_rsp_error_o                     = 1'b0;
+        st1_rsp_spm_inactive_o              = 1'b0;
         st1_rsp_aborted_o                   = 1'b0;
 
         st1_err_o                           = 1'b0;
@@ -672,7 +674,17 @@ import hpdcache_pkg::*;
                         //  that completes, or the entry stays allocated forever.
                         st1_rtab_commit_o = st1_req_rtab_i;
 
-                        if (st1_req_is_store_i) begin
+                        //  No SPM way configured at this address (dir_spm_way in the memctrl
+                        //  is empty): there is nothing to read or write. Behave like the CVA6
+                        //  SPM controllers (dspm_ctrl, ispm_ctrl): drop the store and return
+                        //  the "inactive" magic value to a load, instead of the zero word the
+                        //  data mux yields with no way selected.
+                        if (!st1_dir_hit_i && (st1_req_is_store_i || st1_req_is_load_i)) begin
+                            st1_rsp_valid_o        = st1_req_need_rsp_i;
+                            st1_rsp_spm_inactive_o = st1_req_is_load_i;
+                        end
+
+                        else if (st1_req_is_store_i) begin
                              //  Respond to the core
                             st1_rsp_valid_o = st1_req_need_rsp_i;
 
@@ -701,7 +713,7 @@ import hpdcache_pkg::*;
                             evt_write_req_o = 1'b1;
                         end
 
-                        if (st1_req_is_load_i) begin
+                        else if (st1_req_is_load_i) begin
                                 //  Respond to the core
                                 st1_rsp_valid_o = st1_req_need_rsp_i;
 
@@ -713,6 +725,18 @@ import hpdcache_pkg::*;
 
                                 //  Performance event
                                 evt_read_req_o     = 1'b1;
+                        end
+
+                        //  A prefetch has nothing to bring into an SPM
+                        else if (st1_req_is_cmo_prefetch_i) begin
+                            st1_rsp_valid_o = st1_req_need_rsp_i;
+                        end
+
+                        //  The SPM implements loads and stores only. Anything else (AMOs,
+                        //  LR/SC) must still be answered, or its requester waits forever.
+                        else begin
+                            st1_rsp_valid_o = st1_req_need_rsp_i;
+                            st1_rsp_error_o = st1_req_need_rsp_i;
                         end
                     end else if(st1_req_is_ispm_req_i) begin
                         //  Handed over to the ISPM controller: done as far as the replay
