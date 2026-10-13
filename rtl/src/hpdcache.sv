@@ -134,6 +134,7 @@ import hpdcache_pkg::*;
 
     //      Status interface
     output logic                          wbuf_empty_o,
+    output logic                          ctrl_busy_o,
 
     //      Configuration interface
     input  logic                          cfg_enable_i,
@@ -353,6 +354,9 @@ import hpdcache_pkg::*;
 
     logic                  rtab_empty;
     logic                  ctrl_empty;
+
+    // The cache is busy while any handler has outstanding work
+    assign ctrl_busy_o = ~(ctrl_empty & rtab_empty & wbuf_empty_o & miss_mshr_empty & flush_empty);
 
     logic                  core_rsp_valid;
     hpdcache_rsp_t         core_rsp;
