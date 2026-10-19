@@ -64,6 +64,7 @@ import hpdcache_pkg::*;
     //  Internal signals and registers
     //  {{{
     logic         unused_available, rand_available, clean_available, dirty_available;
+    logic         rand_is_dspm;
     way_vector_t  unused_ways, rand_ways, clean_ways, dirty_ways;
     way_vector_t  unused_victim_way, rand_victim_way, clean_victim_way, dirty_victim_way;
     logic [7:0]   lfsr_val;
@@ -76,11 +77,15 @@ import hpdcache_pkg::*;
     assign clean_ways  = ~cfg_dspm_ways_i & ~sel_dir_fetch_i &  sel_dir_valid_i & ~sel_dir_dirty_i;
     assign dirty_ways  = ~cfg_dspm_ways_i & ~sel_dir_fetch_i &  sel_dir_valid_i &  sel_dir_dirty_i;
 
+    //  The LFSR advances after a usable pick, and after a pick of an SPM way:
+    //  an SPM way is never a victim, so the next selection needs a new pick.
+    assign rand_is_dspm = |(rand_victim_way & cfg_dspm_ways_i);
+
     hpdcache_lfsr #(.WIDTH(8))
         lfsr_i(
             .clk_i,
             .rst_ni,
-            .shift_i   (sel_victim_i & ~unused_available & rand_available),
+            .shift_i   (sel_victim_i & ~unused_available & (rand_available | rand_is_dspm)),
             .val_o     (lfsr_val)
         );
 
