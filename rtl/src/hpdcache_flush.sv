@@ -322,7 +322,9 @@ import hpdcache_pkg::*;
         mem_req_id: hpdcache_mem_id_t'(flush_dir_free_ptr),
         mem_req_command: HPDCACHE_MEM_WRITE,
         mem_req_atomic: HPDCACHE_MEM_ATOMIC_ADD, /* NOP */
-        mem_req_cacheable: 1'b1
+        mem_req_cacheable: 1'b1,
+        //  only a write-back cacheline can be dirty
+        mem_req_bufferable: 1'b1
     };
     hpdcache_fifo_reg #(
         .FIFO_DEPTH     (2),
