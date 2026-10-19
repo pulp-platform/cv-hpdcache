@@ -79,6 +79,11 @@ package hpdcache_pkg;
     //      {{{
     typedef struct packed
     {
+        //  The memory may buffer the write (bufferable attribute of the memory
+        //  interface): with uncacheable cleared it marks a write-back region,
+        //  with uncacheable set a non-cacheable region whose writes may be
+        //  acknowledged before they reach their destination.
+        logic bufferable;
         logic uncacheable;
         logic io; //  FIXME: for future use
 
