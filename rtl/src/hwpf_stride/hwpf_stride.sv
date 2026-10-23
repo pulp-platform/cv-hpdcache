@@ -146,6 +146,7 @@ import hpdcache_pkg::*;
            hpdcache_req_o.need_rsp        = 1'b1,
            hpdcache_req_o.phys_indexed    = 1'b1,
            hpdcache_req_o.addr_tag        = hpdcache_req_tag,
+           hpdcache_req_o.pma.bufferable  = 1'b0,
            hpdcache_req_o.pma.uncacheable = 1'b0,
            hpdcache_req_o.pma.io          = 1'b0;
     //  }}}
