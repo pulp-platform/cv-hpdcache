@@ -331,7 +331,8 @@ import hpdcache_pkg::*;
     logic                  ctrl_empty;
 
     // The cache is busy while any handler has outstanding work
-    assign ctrl_busy_o = ~(ctrl_empty & rtab_empty & wbuf_empty_o & miss_mshr_empty & flush_empty);
+    assign ctrl_busy_o = ~(ctrl_empty & rtab_empty & wbuf_empty_o & miss_mshr_empty & flush_empty &
+                           uc_ready & cmo_ready);
 
     logic                  core_rsp_valid;
     hpdcache_rsp_t         core_rsp;
