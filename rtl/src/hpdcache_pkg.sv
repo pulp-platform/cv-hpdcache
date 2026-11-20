@@ -447,6 +447,9 @@ package hpdcache_pkg;
         bit eccEn;
         //  Enable error correction scrubber
         bit eccScrubberEn;
+        //  Drop the refill of a read miss whose requester has killed it: the line is not
+        //  installed and the victim's directory entry is restored (read-only caches only)
+        bit refillDropKilled;
     } hpdcache_user_cfg_t;
 
     typedef struct packed {

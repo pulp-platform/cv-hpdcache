@@ -70,6 +70,10 @@ import hpdcache_pkg::*;
     input  logic                          core_req_abort_i [HPDcacheCfg.u.nRequesters],
     input  hpdcache_tag_t                 core_req_tag_i   [HPDcacheCfg.u.nRequesters],
     input  hpdcache_pma_t                 core_req_pma_i   [HPDcacheCfg.u.nRequesters],
+    //         any cycle: the transaction IDs whose requests the requester has killed and
+    //         whose responses it still awaits (used with refillDropKilled)
+    input  logic [2**HPDcacheCfg.u.reqTransIdWidth-1:0]
+                                          core_req_killed_i [HPDcacheCfg.u.nRequesters],
 
     //      Core response interface
     output logic                          core_rsp_valid_o [HPDcacheCfg.u.nRequesters],
@@ -220,6 +224,9 @@ import hpdcache_pkg::*;
     hpdcache_req_data_t    miss_mshr_alloc_wdata;
     hpdcache_req_be_t      miss_mshr_alloc_be;
     hpdcache_way_vector_t  miss_mshr_alloc_victim_way;
+    hpdcache_tag_t         miss_mshr_alloc_victim_tag;
+    logic                  miss_mshr_alloc_victim_valid;
+    logic                  miss_mshr_alloc_victim_wback;
     logic                  miss_mshr_alloc_need_rsp;
     logic                  miss_mshr_alloc_is_prefetch;
     logic                  miss_mshr_alloc_wback;
@@ -502,6 +509,9 @@ import hpdcache_pkg::*;
         .st2_mshr_alloc_wdata_o             (miss_mshr_alloc_wdata),
         .st2_mshr_alloc_be_o                (miss_mshr_alloc_be),
         .st2_mshr_alloc_victim_way_o        (miss_mshr_alloc_victim_way),
+        .st2_mshr_alloc_victim_tag_o        (miss_mshr_alloc_victim_tag),
+        .st2_mshr_alloc_victim_valid_o      (miss_mshr_alloc_victim_valid),
+        .st2_mshr_alloc_victim_wback_o      (miss_mshr_alloc_victim_wback),
         .st2_mshr_alloc_need_rsp_o          (miss_mshr_alloc_need_rsp),
         .st2_mshr_alloc_is_prefetch_o       (miss_mshr_alloc_is_prefetch),
         .st2_mshr_alloc_wback_o             (miss_mshr_alloc_wback),
@@ -766,6 +776,10 @@ import hpdcache_pkg::*;
 
         .cfg_prefetch_updt_sel_victim_i     (cfg_prefetch_updt_plru_i),
 
+        .core_req_killed_i,
+        .rtab_empty_i                       (rtab_empty),
+        .cmo_dir_updt_i                     (cmo_dir_updt),
+
         .mshr_check_i                       (miss_mshr_check),
         .mshr_check_offset_i                (miss_mshr_check_offset),
         .mshr_check_nline_i                 (miss_mshr_check_nline),
@@ -781,6 +795,9 @@ import hpdcache_pkg::*;
         .mshr_alloc_sid_i                   (miss_mshr_alloc_sid),
         .mshr_alloc_word_i                  (miss_mshr_alloc_word),
         .mshr_alloc_victim_way_i            (miss_mshr_alloc_victim_way),
+        .mshr_alloc_victim_tag_i            (miss_mshr_alloc_victim_tag),
+        .mshr_alloc_victim_valid_i          (miss_mshr_alloc_victim_valid),
+        .mshr_alloc_victim_wback_i          (miss_mshr_alloc_victim_wback),
         .mshr_alloc_need_rsp_i              (miss_mshr_alloc_need_rsp),
         .mshr_alloc_is_prefetch_i           (miss_mshr_alloc_is_prefetch),
         .mshr_alloc_wback_i                 (miss_mshr_alloc_wback),

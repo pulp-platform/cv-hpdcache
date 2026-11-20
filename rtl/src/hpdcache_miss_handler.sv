@@ -76,6 +76,14 @@ import hpdcache_pkg::*;
     input  logic                  cfg_prefetch_updt_sel_victim_i,
     //      }}}
 
+    //      Killed requests (refillDropKilled)
+    //      {{{
+    input  logic [2**HPDcacheCfg.u.reqTransIdWidth-1:0]
+                                  core_req_killed_i [HPDcacheCfg.u.nRequesters],
+    input  logic                  rtab_empty_i,
+    input  logic                  cmo_dir_updt_i,
+    //      }}}
+
     //      CHECK interface
     //      {{{
     input  logic                  mshr_check_i,
@@ -97,6 +105,9 @@ import hpdcache_pkg::*;
     input  hpdcache_req_sid_t     mshr_alloc_sid_i,
     input  hpdcache_word_t        mshr_alloc_word_i,
     input  hpdcache_way_vector_t  mshr_alloc_victim_way_i,
+    input  hpdcache_tag_t         mshr_alloc_victim_tag_i,
+    input  logic                  mshr_alloc_victim_valid_i,
+    input  logic                  mshr_alloc_victim_wback_i,
     input  logic                  mshr_alloc_need_rsp_i,
     input  logic                  mshr_alloc_is_prefetch_i,
     input  logic                  mshr_alloc_wback_i,
@@ -194,6 +205,12 @@ import hpdcache_pkg::*;
     logic                    refill_need_rsp_q;
     logic                    refill_is_prefetch_q;
     logic                    refill_wback_q;
+    logic                    refill_drop_q;
+    logic                    refill_drop;
+    logic                    refill_drop_first;
+    hpdcache_tag_t           refill_victim_tag;
+    logic                    refill_victim_valid;
+    logic                    refill_victim_wback;
     logic                    refill_dirty_q;
     hpdcache_req_data_t      refill_dirty_wdata_q;
     hpdcache_req_be_t        refill_dirty_be_q;
@@ -453,7 +470,7 @@ import hpdcache_pkg::*;
                     refill_dirty_wdata = refill_dirty_wdata_q;
                     refill_dirty_be = refill_dirty_be_q;
                 end
-                refill_write_data_o = ~refill_is_error_o;
+                refill_write_data_o = ~refill_is_error_o & ~refill_drop;
 
                 //  Consume chunk of data from the FIFO buffer in the memory interface
                 refill_fifo_resp_data_r = 1'b1;
@@ -475,7 +492,7 @@ import hpdcache_pkg::*;
                         //  - There is no error in response AND
                         //  - It is a prefetch and the cfg_prefetch_updt_sel_victim_i is set OR
                         //  - It is a read miss.
-                        refill_updt_sel_victim_o  =  ~refill_is_error_o &
+                        refill_updt_sel_victim_o  =  ~refill_is_error_o & ~refill_drop &
                                                     (~is_prefetch | cfg_prefetch_updt_sel_victim_i);
 
                         //  Update dependency flags in the retry table
@@ -505,7 +522,7 @@ import hpdcache_pkg::*;
                 //  - There is no error in response AND
                 //  - It is a prefetch and the cfg_prefetch_updt_sel_victim_i is set OR
                 //  - It is a read miss.
-                refill_updt_sel_victim_o  = ~refill_is_error_o &
+                refill_updt_sel_victim_o  = ~refill_is_error_o & ~refill_drop &
                                            (~refill_is_prefetch_q | cfg_prefetch_updt_sel_victim_i);
 
                 //  Update dependency flags in the retry table
@@ -569,8 +586,16 @@ import hpdcache_pkg::*;
     end
 
     //  Write the new entry in the cache directory
-    //  In case of error in the refill response, invalidate pre-allocated cache directory entry
-    assign refill_dir_entry_o = '{
+    //  In case of error in the refill response, invalidate pre-allocated cache directory entry.
+    //  A dropped refill restores the victim's entry instead.
+    assign refill_dir_entry_o = refill_drop ? '{
+        valid   : refill_victim_valid,
+        wback   : refill_victim_wback,
+        dirty   : 1'b0,
+        fetch   : 1'b0,
+        tag     : refill_victim_tag,
+        default :'0
+    } : '{
         valid   : ~refill_is_error_o,
         wback   : ~refill_is_error_o & refill_wback_q,
         dirty   : ~refill_is_error_o & refill_dirty_q,
@@ -748,6 +773,7 @@ import hpdcache_pkg::*;
             refill_need_rsp_q <= '0;
             refill_is_prefetch_q <= '0;
             refill_wback_q <= '0;
+            refill_drop_q <= 1'b0;
             refill_dirty_q <= '0;
             refill_dirty_wdata_q <= '0;
             refill_dirty_be_q <= '0;
@@ -763,6 +789,7 @@ import hpdcache_pkg::*;
                 refill_need_rsp_q <= mshr_ack_need_rsp;
                 refill_is_prefetch_q <= mshr_ack_is_prefetch;
                 refill_wback_q <= mshr_ack_wback;
+                refill_drop_q <= refill_drop_first;
                 refill_dirty_q <= mshr_ack_dirty;
                 refill_dirty_wdata_q <= mshr_ack_wdata;
                 refill_dirty_be_q <= mshr_ack_be;
@@ -772,6 +799,90 @@ import hpdcache_pkg::*;
         end
     end
     //  }}}
+    //  }}}
+
+    //  Dropping the refill of a killed request
+    //  {{{
+    if (HPDcacheCfg.u.refillDropKilled) begin : gen_refill_drop_killed
+        localparam hpdcache_uint NSLOTS = HPDcacheCfg.u.mshrSets*HPDcacheCfg.u.mshrWays;
+
+        //  Each MSHR slot keeps its victim's directory entry, and whether it may be
+        //  restored: a directory update by the CMO handler (an invalidation) while the
+        //  miss is outstanding forbids it.
+        hpdcache_tag_t [NSLOTS-1:0] victim_tag_q;
+        logic          [NSLOTS-1:0] victim_valid_q, victim_wback_q, victim_keep_q;
+        hpdcache_tag_t              refill_victim_tag_q;
+        logic                       refill_victim_valid_q, refill_victim_wback_q;
+        logic                       refill_victim_keep_q;
+        hpdcache_uint               alloc_slot, ack_slot;
+
+        if (HPDcacheCfg.u.mshrSets > 1) begin : gen_slot_sets
+            assign alloc_slot = hpdcache_uint'(mshr_alloc_way_d)*HPDcacheCfg.u.mshrSets +
+                                hpdcache_uint'(mshr_alloc_nline_i[0 +: HPDcacheCfg.mshrSetWidth]);
+            assign ack_slot   = hpdcache_uint'(mshr_ack_way)*HPDcacheCfg.u.mshrSets +
+                                hpdcache_uint'(mshr_ack_set);
+        end else begin : gen_slot_ways
+            assign alloc_slot = hpdcache_uint'(mshr_alloc_way_d);
+            assign ack_slot   = hpdcache_uint'(mshr_ack_way);
+        end
+
+        //  Drop a plain read miss whose requester has killed it, while no request waits
+        //  in the replay table (it could be waiting for this line), when its victim holds
+        //  a line to keep: into an empty way, the killed line is installed
+        assign refill_drop_first = core_req_killed_i[mshr_ack_src_id][mshr_ack_req_id] &
+                                   mshr_ack_need_rsp & ~mshr_ack_is_prefetch & ~mshr_ack_dirty &
+                                   victim_valid_q[ack_slot] & victim_keep_q[ack_slot] &
+                                   rtab_empty_i & ~refill_is_error_o;
+        assign refill_drop = ((refill_fsm_q == REFILL_WRITE) && (refill_cnt_q == 0)) ?
+                             refill_drop_first : refill_drop_q;
+
+        assign refill_victim_tag   = refill_victim_tag_q;
+        assign refill_victim_valid = refill_victim_valid_q & refill_victim_keep_q;
+        assign refill_victim_wback = refill_victim_wback_q & refill_victim_keep_q;
+
+        always_ff @(posedge clk_i or negedge rst_ni)
+        begin : refill_drop_ff
+            if (!rst_ni) begin
+                victim_tag_q          <= '0;
+                victim_valid_q        <= '0;
+                victim_wback_q        <= '0;
+                victim_keep_q         <= '0;
+                refill_victim_tag_q   <= '0;
+                refill_victim_valid_q <= 1'b0;
+                refill_victim_wback_q <= 1'b0;
+                refill_victim_keep_q  <= 1'b0;
+            end else begin
+                if (cmo_dir_updt_i) begin
+                    victim_keep_q        <= '0;
+                    refill_victim_keep_q <= 1'b0;
+                end
+                if (mshr_alloc) begin
+                    victim_tag_q[alloc_slot]   <= mshr_alloc_victim_tag_i;
+                    victim_valid_q[alloc_slot] <= mshr_alloc_victim_valid_i;
+                    victim_wback_q[alloc_slot] <= mshr_alloc_victim_wback_i;
+                    victim_keep_q[alloc_slot]  <= ~cmo_dir_updt_i;
+                end
+                //  The slot may be allocated again during the refill: keep its victim here
+                if ((refill_fsm_q == REFILL_WRITE) && (refill_cnt_q == 0)) begin
+                    refill_victim_tag_q   <= victim_tag_q[ack_slot];
+                    refill_victim_valid_q <= victim_valid_q[ack_slot];
+                    refill_victim_wback_q <= victim_wback_q[ack_slot];
+                    refill_victim_keep_q  <= victim_keep_q[ack_slot] & ~cmo_dir_updt_i;
+                end
+            end
+        end
+
+        //  A restored victim is clean and unprotected
+        if (HPDcacheCfg.u.eccEn || HPDcacheCfg.u.wbEn) begin : gen_refill_drop_cfg_assertion
+            $fatal(1, "refillDropKilled requires eccEn = 0 and wbEn = 0");
+        end
+    end else begin : gen_no_refill_drop_killed
+        assign refill_drop_first   = 1'b0;
+        assign refill_drop         = 1'b0;
+        assign refill_victim_tag   = '0;
+        assign refill_victim_valid = 1'b0;
+        assign refill_victim_wback = 1'b0;
+    end
     //  }}}
 
     //  Miss Status Holding Register component

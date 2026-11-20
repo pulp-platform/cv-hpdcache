@@ -88,6 +88,9 @@ import hpdcache_pkg::*;
     output hpdcache_req_data_t    st2_mshr_alloc_wdata_o,
     output hpdcache_req_be_t      st2_mshr_alloc_be_o,
     output hpdcache_way_vector_t  st2_mshr_alloc_victim_way_o,
+    output hpdcache_tag_t         st2_mshr_alloc_victim_tag_o,
+    output logic                  st2_mshr_alloc_victim_valid_o,
+    output logic                  st2_mshr_alloc_victim_wback_o,
     output logic                  st2_mshr_alloc_need_rsp_o,
     output logic                  st2_mshr_alloc_is_prefetch_o,
     output logic                  st2_mshr_alloc_wback_o,
@@ -303,6 +306,9 @@ import hpdcache_pkg::*;
     hpdcache_req_data_t      st2_mshr_alloc_wdata_q;
     hpdcache_req_be_t        st2_mshr_alloc_be_q;
     hpdcache_way_vector_t    st2_mshr_alloc_victim_way_q;
+    hpdcache_tag_t           st2_mshr_alloc_victim_tag_q;
+    logic                    st2_mshr_alloc_victim_valid_q;
+    logic                    st2_mshr_alloc_victim_wback_q;
 
     logic                    st2_flush_alloc_q, st2_flush_alloc_d;
     hpdcache_nline_t         st2_flush_alloc_nline_q;
@@ -918,6 +924,9 @@ import hpdcache_pkg::*;
             st2_mshr_alloc_dirty_q       <= '0;
             st2_mshr_alloc_bufferable_q  <= '0;
             st2_mshr_alloc_victim_way_q  <= '0;
+            st2_mshr_alloc_victim_tag_q  <= '0;
+            st2_mshr_alloc_victim_valid_q <= 1'b0;
+            st2_mshr_alloc_victim_wback_q <= 1'b0;
             st2_flush_alloc_nline_q <= '0;
             st2_flush_alloc_way_q   <= '0;
             st2_dir_updt_tag_q    <= '0;
@@ -940,6 +949,9 @@ import hpdcache_pkg::*;
                 st2_mshr_alloc_dirty_q       <= st2_mshr_alloc_dirty_d;
                 st2_mshr_alloc_bufferable_q  <= st1_req.req.pma.bufferable;
                 st2_mshr_alloc_victim_way_q  <= st1_dir_victim_way;
+                st2_mshr_alloc_victim_tag_q  <= st1_dir_victim_tag;
+                st2_mshr_alloc_victim_valid_q <= st1_dir_victim_valid;
+                st2_mshr_alloc_victim_wback_q <= st1_dir_victim_wback;
             end
 
             if (st2_flush_alloc_d) begin
@@ -1175,6 +1187,9 @@ import hpdcache_pkg::*;
     assign st2_mshr_alloc_wdata_o       = st2_mshr_alloc_wdata_q;
     assign st2_mshr_alloc_be_o          = st2_mshr_alloc_be_q;
     assign st2_mshr_alloc_victim_way_o  = st2_mshr_alloc_victim_way_q;
+    assign st2_mshr_alloc_victim_tag_o  = st2_mshr_alloc_victim_tag_q;
+    assign st2_mshr_alloc_victim_valid_o = st2_mshr_alloc_victim_valid_q;
+    assign st2_mshr_alloc_victim_wback_o = st2_mshr_alloc_victim_wback_q;
     assign st2_mshr_alloc_need_rsp_o    = st2_mshr_alloc_need_rsp_q;
     assign st2_mshr_alloc_is_prefetch_o = st2_mshr_alloc_is_prefetch_q;
     assign st2_mshr_alloc_wback_o       = st2_mshr_alloc_wback_q;
