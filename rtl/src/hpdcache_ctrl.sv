@@ -538,7 +538,8 @@ import hpdcache_pkg::*;
        if (ispm_rsp_valid_q) begin
           ispm_rsp_valid   = ispm_need_rsp_q &
                             ~refill_core_rsp_valid_i &
-                            ~uc_core_rsp_valid_i;
+                            ~uc_core_rsp_valid_i &
+                            ~cmo_core_rsp_valid_i;
           ispm_rsp_valid_d = ispm_need_rsp_q & ~ispm_rsp_valid;
           ispm_need_rsp_d  = ispm_need_rsp_q & ~ispm_rsp_valid;
        end
@@ -862,6 +863,7 @@ import hpdcache_pkg::*;
 
         .ispm_req_submit_o                  (ispm_req_submit_pe),
         .ispm_req_pend_i                    (ispm_req_pend_ctrl),
+        .ispm_rsp_pend_i                    (ispm_rsp_valid_q),
 
         .refill_busy_i,
         .refill_core_rsp_valid_i,

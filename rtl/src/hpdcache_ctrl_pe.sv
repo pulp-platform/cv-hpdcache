@@ -175,6 +175,7 @@ import hpdcache_pkg::*;
 
     output logic                   ispm_req_submit_o,
     input  logic                   ispm_req_pend_i,
+    input  logic                   ispm_rsp_pend_i,
 
     //   Refill interface
     //   {{{
@@ -419,10 +420,10 @@ import hpdcache_pkg::*;
         end
         //  }}}
 
-        //  ISPM request pending
+        //  ISPM request or response pending
         //  {{{
-        else if (ispm_req_pend_i) begin
-            //  stall to let the ISPM request finish
+        else if (ispm_req_pend_i || ispm_rsp_pend_i) begin
+            //  stall to let the ISPM request finish and its response go out
             evt_stall_refill_o = core_req_valid_i;
         end
         //  }}}
@@ -743,6 +744,8 @@ import hpdcache_pkg::*;
                         //  table is concerned.
                         st1_rtab_commit_o  = st1_req_rtab_i;
                         ispm_req_submit_o  = 1'b1;
+                        //  No request enters stage 1 behind it
+                        st1_nop            = 1'b1;
                         evt_read_req_o     = 1'b1;
                     end
                 //  }}}
@@ -1391,7 +1394,8 @@ import hpdcache_pkg::*;
                                & ~err_busy_i
                                & ~rtab_fence_i
                                & ~nop
-                               & ~ispm_req_pend_i;
+                               & ~ispm_req_pend_i
+                               & ~ispm_rsp_pend_i;
 
             scrub_req_ready_o = scrub_req_valid_i
                                & ~rtab_req_valid_i
